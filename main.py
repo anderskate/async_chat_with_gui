@@ -1,5 +1,6 @@
 import asyncio
 from asyncio.queues import QueueEmpty
+from tkinter import messagebox
 import gui
 import argparse
 import aiofiles
@@ -11,7 +12,7 @@ from time import time
 import datetime
 
 
-class UnknownTokenException(Exception):
+class InvalidToken(Exception):
     """Called when user token is unknown."""
     pass
 
@@ -85,7 +86,10 @@ async def authorise(reader, writer, account_hash):
     # logger.info(credentials)
 
     if json.loads(credentials) is None:
-        raise UnknownTokenException(
+        error_msg = 'Неизвестный токен. ' \
+                    'Проверьте его или зарегистрируйте заново.'
+        messagebox.showerror("Неверный токен", error_msg)
+        raise InvalidToken(
             'Неизвестный токен. '
             'Проверьте его или зарегистрируйте заново.'
             )
