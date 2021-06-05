@@ -105,6 +105,10 @@ async def send_msgs(host, port, queue):
             msg = await queue.get()
             print(f'Пользователь написал: {msg}')
 
+            formatted_message = msg.replace('\n', '')
+            writer.write(f'{formatted_message}\n\n'.encode())
+            await writer.drain()
+
 
 async def main():
     # loop = asyncio.get_event_loop()
