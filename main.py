@@ -3,11 +3,17 @@ from asyncio.queues import QueueEmpty
 import gui
 import argparse
 import aiofiles
+import json
 
 from get_connection import get_connection
 
 from time import time
 import datetime
+
+
+class UnknownTokenException(Exception):
+    """Called when user token is unknown."""
+    pass
 
 
 async def generate_msgs(queue):
@@ -64,8 +70,47 @@ async def save_msgs(filepath, queue):
                 await f.write(log_msg)
 
 
+async def authorise(reader, writer, account_hash):
+    """Login to chat with user account hash.
+    If account_hash is incorrect, it return an error,
+    if correct, it return user credentials.
+    """
+    data = await reader.readline()
+    # logger.info(data)
+
+    writer.write(f'{account_hash}\n'.encode())
+    await writer.drain()
+
+    credentials = await reader.readline()
+    # logger.info(credentials)
+
+    if json.loads(credentials) is None:
+        raise UnknownTokenException(
+            'Неизвестный токен. '
+            'Проверьте его или зарегистрируйте заново.'
+            )
+
+    user_name = json.loads(credentials).get('nickname')
+    print(f'Выполнена авторизация. Пользователь "{user_name}"')
+
+    # return credentials
+
+
+async def send_msgs(host, port, queue):
+    async with get_connection(host, port, timeout=40) as connection:
+        reader, writer = connection
+        await authorise(reader, writer, '')
+
+        while True:
+            msg = await queue.get()
+            print(f'Пользователь написал: {msg}')
+
+
 async def main():
     # loop = asyncio.get_event_loop()
+
+    # {"nickname": "Cool anderskate",
+    # "account_hash": ""}
 
     parser = argparse.ArgumentParser(
         description='Program for streaming and sending messages in chat'
@@ -109,6 +154,7 @@ async def main():
         upload_old_msgs(history_path, messages_queue),
         read_msgs(host, port, messages_queue, saving_msgs_queue),
         save_msgs(history_path, saving_msgs_queue),
+        send_msgs(host, 5050, sending_queue),
         gui.draw(messages_queue, sending_queue, status_updates_queue)
     )
 
