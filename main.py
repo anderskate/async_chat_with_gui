@@ -37,10 +37,12 @@ async def upload_old_msgs(filepath, queue):
             queue.put_nowait(msg)
 
 
-async def read_msgs(host, port, msg_queue, save_msg_queue):
+async def read_msgs(host, port, msg_queue, save_msg_queue, status_queue):
     async with get_connection(host, port, timeout=40) as connection:
         reader, writer = connection
         # await save_data_to_log_file('Установлено соединение', history_path)
+
+        status_queue.put_nowait(gui.ReadConnectionStateChanged.ESTABLISHED)
 
         while True:
             msg = await reader.readline()
@@ -97,13 +99,18 @@ async def authorise(reader, writer, account_hash):
     user_name = json.loads(credentials).get('nickname')
     print(f'Выполнена авторизация. Пользователь "{user_name}"')
 
-    # return credentials
+    return user_name
 
 
-async def send_msgs(host, port, queue):
+async def send_msgs(host, port, queue, status_queue):
     async with get_connection(host, port, timeout=40) as connection:
         reader, writer = connection
-        await authorise(reader, writer, '')
+
+        user_name = await authorise(reader, writer, '')
+        event = gui.NicknameReceived(user_name)
+        status_queue.put_nowait(event)
+
+        status_queue.put_nowait(gui.SendingConnectionStateChanged.ESTABLISHED)
 
         while True:
             msg = await queue.get()
@@ -160,9 +167,9 @@ async def main():
 
     await asyncio.gather(
         upload_old_msgs(history_path, messages_queue),
-        read_msgs(host, port, messages_queue, saving_msgs_queue),
+        read_msgs(host, port, messages_queue, saving_msgs_queue, status_updates_queue),
         save_msgs(history_path, saving_msgs_queue),
-        send_msgs(host, 5050, sending_queue),
+        send_msgs(host, 5050, sending_queue, status_updates_queue),
         gui.draw(messages_queue, sending_queue, status_updates_queue)
     )
 
