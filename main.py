@@ -1,15 +1,20 @@
 import asyncio
 from asyncio.queues import QueueEmpty
+from anyio import create_task_group, run, CancelScope
 from tkinter import messagebox
 import gui
 import argparse
 import aiofiles
 import json
+from async_timeout import timeout
 
 from get_connection import get_connection
 
 from time import time
 import datetime
+import logging
+
+watchdog_logger = logging.getLogger(__file__)
 
 
 class InvalidToken(Exception):
@@ -37,21 +42,34 @@ async def upload_old_msgs(filepath, queue):
             queue.put_nowait(msg)
 
 
-async def read_msgs(host, port, msg_queue, save_msg_queue, status_queue):
-    async with get_connection(host, port, timeout=40) as connection:
-        reader, writer = connection
-        # await save_data_to_log_file('Установлено соединение', history_path)
+async def read_msgs(host, port, msg_queue, save_msg_queue, status_queue, watchdog_queue):
+    try:
+        status_queue.put_nowait(gui.ReadConnectionStateChanged.INITIATED)
+        async with get_connection(host, port, timeout=40) as connection:
+            reader, writer = connection
 
-        status_queue.put_nowait(gui.ReadConnectionStateChanged.ESTABLISHED)
+            status_queue.put_nowait(gui.ReadConnectionStateChanged.ESTABLISHED)
 
-        while True:
-            msg = await reader.readline()
-            formatted_msg = msg.decode()
-            msg_queue.put_nowait(formatted_msg)
-            save_msg_queue.put_nowait(formatted_msg)
+            while True:
+                try:
+                    async with timeout(3) as cm:
+                        msg = await reader.readline()
+                except asyncio.TimeoutError as e:
+                    print(cm.expired)
+                    watchdog_queue.put_nowait(None)
+                    continue
+                formatted_msg = msg.decode()
+                msg_queue.put_nowait(formatted_msg)
 
-            await asyncio.sleep(1)
-            # logger.debug(data.decode())
+                watchdog_queue.put_nowait(
+                    'Connection is alive. New message in chat'
+                )
+                save_msg_queue.put_nowait(formatted_msg)
+
+                await asyncio.sleep(1)
+                # logger.debug(data.decode())
+    finally:
+        status_queue.put_nowait(gui.ReadConnectionStateChanged.CLOSED)
 
 
 async def save_msgs(filepath, queue):
@@ -102,28 +120,68 @@ async def authorise(reader, writer, account_hash):
     return user_name
 
 
-async def send_msgs(host, port, queue, status_queue):
-    async with get_connection(host, port, timeout=40) as connection:
-        reader, writer = connection
+async def send_msgs(host, port, queue, status_queue, watchdog_queue):
+    try:
+        status_queue.put_nowait(gui.SendingConnectionStateChanged.INITIATED)
+        async with get_connection(host, port, timeout=40) as connection:
+            reader, writer = connection
 
-        user_name = await authorise(reader, writer, '')
-        event = gui.NicknameReceived(user_name)
-        status_queue.put_nowait(event)
+            user_name = await authorise(reader, writer, '')
+            event = gui.NicknameReceived(user_name)
+            status_queue.put_nowait(event)
+            status_queue.put_nowait(gui.SendingConnectionStateChanged.ESTABLISHED)
 
-        status_queue.put_nowait(gui.SendingConnectionStateChanged.ESTABLISHED)
+            while True:
+                msg = await queue.get()
+                print(f'Пользователь написал: {msg}')
 
-        while True:
-            msg = await queue.get()
-            print(f'Пользователь написал: {msg}')
+                formatted_message = msg.replace('\n', '')
+                writer.write(f'{formatted_message}\n\n'.encode())
+                await writer.drain()
 
-            formatted_message = msg.replace('\n', '')
-            writer.write(f'{formatted_message}\n\n'.encode())
-            await writer.drain()
+                watchdog_queue.put_nowait('Connection is alive. Message sent')
+    finally:
+        status_queue.put_nowait(gui.SendingConnectionStateChanged.CLOSED)
+
+
+async def watch_for_connection(watchdog_queue):
+    while True:
+        try:
+            msg = watchdog_queue.get_nowait()
+            if not msg:
+                raise ConnectionError
+        except QueueEmpty:
+            msg = None
+
+        if msg:
+            watchdog_logger.info(msg)
+
+        await asyncio.sleep(1)
+
+
+async def handle_connection(
+        host, port_1, messages_queue, sending_queue,
+        status_updates_queue, saving_msgs_queue):
+    watchdog_queue = asyncio.Queue()
+    while True:
+        try:
+            async with create_task_group() as tg:
+                tg.start_soon(
+                    read_msgs, host, port_1, messages_queue,
+                    saving_msgs_queue, status_updates_queue, watchdog_queue
+                )
+                tg.start_soon(
+                    send_msgs, host, 5050, sending_queue,
+                    status_updates_queue, watchdog_queue
+                )
+                tg.start_soon(
+                    watch_for_connection, watchdog_queue
+                )
+        except ConnectionError:
+            tg.cancel_scope.cancel()
 
 
 async def main():
-    # loop = asyncio.get_event_loop()
-
     # {"nickname": "Cool anderskate",
     # "account_hash": ""}
 
@@ -157,24 +215,28 @@ async def main():
     token = args.token
     history_path = args.history
 
+    logging.basicConfig(
+        format='[%(created).0f] %(message)s',
+        level=logging.INFO
+    )
+
     messages_queue = asyncio.Queue()
     saving_msgs_queue = asyncio.Queue()
     sending_queue = asyncio.Queue()
     status_updates_queue = asyncio.Queue()
 
-    # messages_queue.put_nowait('Иван: Привет всем в этом чатике!')
-    # messages_queue.put_nowait('Иван: Как дела?')
-
-    await asyncio.gather(
-        upload_old_msgs(history_path, messages_queue),
-        read_msgs(host, port, messages_queue, saving_msgs_queue, status_updates_queue),
-        save_msgs(history_path, saving_msgs_queue),
-        send_msgs(host, 5050, sending_queue, status_updates_queue),
-        gui.draw(messages_queue, sending_queue, status_updates_queue)
-    )
-
-    # loop.run_until_complete()
+    while True:
+        async with create_task_group() as tg:
+            tg.start_soon(upload_old_msgs, history_path, messages_queue)
+            tg.start_soon(save_msgs, history_path, saving_msgs_queue)
+            tg.start_soon(
+                handle_connection, host, port,
+                messages_queue, sending_queue, status_updates_queue,
+                saving_msgs_queue
+            )
+            tg.start_soon(gui.draw, messages_queue,
+                          sending_queue, status_updates_queue)
 
 
 if __name__ == '__main__':
-    asyncio.run(main())
+    run(main)
