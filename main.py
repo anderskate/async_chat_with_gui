@@ -132,7 +132,12 @@ async def send_msgs(host, port, queue, status_queue, watchdog_queue):
             status_queue.put_nowait(gui.SendingConnectionStateChanged.ESTABLISHED)
 
             while True:
-                msg = await queue.get()
+                try:
+                    async with timeout(5) as cm:
+                        msg = await queue.get()
+                except asyncio.TimeoutError:
+                    msg = ''
+
                 print(f'Пользователь написал: {msg}')
 
                 formatted_message = msg.replace('\n', '')
@@ -157,6 +162,20 @@ async def watch_for_connection(watchdog_queue):
             watchdog_logger.info(msg)
 
         await asyncio.sleep(1)
+
+
+async def ping_pong(host, port):
+    async with get_connection(host, port, timeout=40) as connection:
+        reader, writer = connection
+
+        while True:
+            writer.write(''.encode())
+            await writer.drain()
+            # async with timeout(3) as cm:
+            ms = await reader.readline()
+            print('qwe')
+            print(ms)
+            await asyncio.sleep(1)
 
 
 async def handle_connection(
