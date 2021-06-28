@@ -1,6 +1,6 @@
 import asyncio
 from asyncio.queues import QueueEmpty
-from anyio import create_task_group, run, CancelScope
+from anyio import create_task_group, run
 from tkinter import messagebox
 import gui
 import argparse
@@ -162,20 +162,6 @@ async def watch_for_connection(watchdog_queue):
             watchdog_logger.info(msg)
 
         await asyncio.sleep(1)
-
-
-async def ping_pong(host, port):
-    async with get_connection(host, port, timeout=40) as connection:
-        reader, writer = connection
-
-        while True:
-            writer.write(''.encode())
-            await writer.drain()
-            # async with timeout(3) as cm:
-            ms = await reader.readline()
-            print('qwe')
-            print(ms)
-            await asyncio.sleep(1)
 
 
 async def handle_connection(
