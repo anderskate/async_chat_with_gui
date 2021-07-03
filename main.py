@@ -10,7 +10,6 @@ from async_timeout import timeout
 
 from get_connection import get_connection
 
-from time import time
 import datetime
 import logging
 
@@ -20,15 +19,6 @@ watchdog_logger = logging.getLogger(__file__)
 class InvalidToken(Exception):
     """Called when user token is unknown."""
     pass
-
-
-async def generate_msgs(queue):
-    while True:
-        time_now = time()
-        msg = f'Ping {time_now}'
-        queue.put_nowait(msg)
-
-        await asyncio.sleep(1)
 
 
 async def upload_old_msgs(filepath, queue):
@@ -244,4 +234,9 @@ async def main():
 
 
 if __name__ == '__main__':
-    run(main)
+    try:
+        run(main)
+    except KeyboardInterrupt:
+        pass
+    except gui.TkAppClosed:
+        pass
