@@ -10,7 +10,7 @@ Download the repository
 
 Open the folder in the terminal:
 ```bash
-cd async_minecraft_chat
+cd async_chat_with_gui
 ```
 Install requirements libraries and packages:
 ```bash
