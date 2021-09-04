@@ -1,17 +1,19 @@
 import asyncio
-from asyncio.queues import QueueEmpty
-from anyio import create_task_group, run
-from tkinter import messagebox
+import datetime
+import logging
 import gui
 import argparse
 import aiofiles
 import json
+from asyncio.queues import QueueEmpty
+from tkinter import messagebox
+from loguru import logger
+
+from anyio import create_task_group, run
 from async_timeout import timeout
 
 from get_connection import get_connection
 
-import datetime
-import logging
 
 watchdog_logger = logging.getLogger(__file__)
 
@@ -22,6 +24,7 @@ class InvalidToken(Exception):
 
 
 async def upload_old_msgs(filepath, queue):
+    """Upload old messages in chat, stored in file."""
     async with aiofiles.open(filepath, mode='r') as f:
         old_msgs = []
         async for msg in f:
@@ -32,7 +35,9 @@ async def upload_old_msgs(filepath, queue):
             queue.put_nowait(msg)
 
 
-async def read_msgs(host, port, msg_queue, save_msg_queue, status_queue, watchdog_queue):
+async def read_msgs(host, port, msg_queue,
+                    save_msg_queue, status_queue, watchdog_queue):
+    """Read messages from chat."""
     try:
         status_queue.put_nowait(gui.ReadConnectionStateChanged.INITIATED)
         async with get_connection(host, port, timeout=40) as connection:
@@ -45,7 +50,6 @@ async def read_msgs(host, port, msg_queue, save_msg_queue, status_queue, watchdo
                     async with timeout(3) as cm:
                         msg = await reader.readline()
                 except asyncio.TimeoutError as e:
-                    print(cm.expired)
                     watchdog_queue.put_nowait(None)
                     continue
                 formatted_msg = msg.decode()
@@ -57,12 +61,13 @@ async def read_msgs(host, port, msg_queue, save_msg_queue, status_queue, watchdo
                 save_msg_queue.put_nowait(formatted_msg)
 
                 await asyncio.sleep(1)
-                # logger.debug(data.decode())
+                logger.debug(formatted_msg)
     finally:
         status_queue.put_nowait(gui.ReadConnectionStateChanged.CLOSED)
 
 
 async def save_msgs(filepath, queue):
+    """Save messages from chat to file."""
     while True:
         try:
             msg = queue.get_nowait()
@@ -87,13 +92,13 @@ async def authorise(reader, writer, account_hash):
     if correct, it return user credentials.
     """
     data = await reader.readline()
-    # logger.info(data)
+    logger.info(data)
 
     writer.write(f'{account_hash}\n'.encode())
     await writer.drain()
 
     credentials = await reader.readline()
-    # logger.info(credentials)
+    logger.info(credentials)
 
     if json.loads(credentials) is None:
         error_msg = 'Неизвестный токен. ' \
@@ -105,21 +110,25 @@ async def authorise(reader, writer, account_hash):
             )
 
     user_name = json.loads(credentials).get('nickname')
-    print(f'Выполнена авторизация. Пользователь "{user_name}"')
+    logger.info(f'Выполнена авторизация. Пользователь "{user_name}"')
 
     return user_name
 
 
-async def send_msgs(host, port, queue, status_queue, watchdog_queue):
+async def send_msgs(host, port, queue, status_queue,
+                    watchdog_queue, account_hash):
+    """Send messages to chat."""
     try:
         status_queue.put_nowait(gui.SendingConnectionStateChanged.INITIATED)
         async with get_connection(host, port, timeout=40) as connection:
             reader, writer = connection
 
-            user_name = await authorise(reader, writer, '')
+            user_name = await authorise(reader, writer, account_hash)
             event = gui.NicknameReceived(user_name)
             status_queue.put_nowait(event)
-            status_queue.put_nowait(gui.SendingConnectionStateChanged.ESTABLISHED)
+            status_queue.put_nowait(
+                gui.SendingConnectionStateChanged.ESTABLISHED
+            )
 
             while True:
                 try:
@@ -128,7 +137,7 @@ async def send_msgs(host, port, queue, status_queue, watchdog_queue):
                 except asyncio.TimeoutError:
                     msg = ''
 
-                print(f'Пользователь написал: {msg}')
+                logger.info(f'Пользователь написал: {msg}')
 
                 formatted_message = msg.replace('\n', '')
                 writer.write(f'{formatted_message}\n\n'.encode())
@@ -140,6 +149,7 @@ async def send_msgs(host, port, queue, status_queue, watchdog_queue):
 
 
 async def watch_for_connection(watchdog_queue):
+    """Investigate the state of the connection."""
     while True:
         try:
             msg = watchdog_queue.get_nowait()
@@ -156,7 +166,8 @@ async def watch_for_connection(watchdog_queue):
 
 async def handle_connection(
         host, port_1, messages_queue, sending_queue,
-        status_updates_queue, saving_msgs_queue):
+        status_updates_queue, saving_msgs_queue, token):
+    """Function to manage connections for reading, sending and analyze."""
     watchdog_queue = asyncio.Queue()
     while True:
         try:
@@ -167,7 +178,7 @@ async def handle_connection(
                 )
                 tg.start_soon(
                     send_msgs, host, 5050, sending_queue,
-                    status_updates_queue, watchdog_queue
+                    status_updates_queue, watchdog_queue, token
                 )
                 tg.start_soon(
                     watch_for_connection, watchdog_queue
@@ -177,9 +188,6 @@ async def handle_connection(
 
 
 async def main():
-    # {"nickname": "Cool anderskate",
-    # "account_hash": ""}
-
     parser = argparse.ArgumentParser(
         description='Program for streaming and sending messages in chat'
     )
@@ -197,7 +205,6 @@ async def main():
     parser.add_argument(
         '--token',
         help='Authorization token',
-        default=None
     )
     parser.add_argument(
         '--history',
@@ -227,7 +234,7 @@ async def main():
             tg.start_soon(
                 handle_connection, host, port,
                 messages_queue, sending_queue, status_updates_queue,
-                saving_msgs_queue
+                saving_msgs_queue, token
             )
             tg.start_soon(gui.draw, messages_queue,
                           sending_queue, status_updates_queue)
