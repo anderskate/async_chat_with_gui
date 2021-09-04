@@ -39,5 +39,5 @@ pip3 install -r requirements.txt
 # Example to run the code
 
 ```bash
-python3 main.py --token=gbrtg-76786-grwegr-8978
+python3 main.py --token=e3337af4-0d6f-11ec-8c47-0242ac110002
 ``` 
