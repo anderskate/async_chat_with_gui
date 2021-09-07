@@ -1,4 +1,4 @@
 aiofiles==0.6.0
 async-timeout==3.0.1
 anyio==3.2.0
-loguru-0.5.3
+loguru==0.5.3

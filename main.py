@@ -1,6 +1,5 @@
 import asyncio
 import datetime
-import logging
 import gui
 import argparse
 import aiofiles
@@ -15,23 +14,15 @@ from async_timeout import timeout
 from get_connection import get_connection
 
 
-watchdog_logger = logging.getLogger(__file__)
-
-
 class InvalidToken(Exception):
     """Called when user token is unknown."""
     pass
 
 
-async def upload_old_msgs(filepath, queue):
+async def load_old_msgs(filepath, queue):
     """Upload old messages in chat, stored in file."""
     async with aiofiles.open(filepath, mode='r') as f:
-        old_msgs = []
         async for msg in f:
-            formatted_msg = msg
-            old_msgs.append(formatted_msg)
-
-        for msg in old_msgs:
             queue.put_nowait(msg)
 
 
@@ -104,10 +95,7 @@ async def authorise(reader, writer, account_hash):
         error_msg = 'Неизвестный токен. ' \
                     'Проверьте его или зарегистрируйте заново.'
         messagebox.showerror("Неверный токен", error_msg)
-        raise InvalidToken(
-            'Неизвестный токен. '
-            'Проверьте его или зарегистрируйте заново.'
-            )
+        raise InvalidToken(error_msg)
 
     user_name = json.loads(credentials).get('nickname')
     logger.info(f'Выполнена авторизация. Пользователь "{user_name}"')
@@ -159,7 +147,7 @@ async def watch_for_connection(watchdog_queue):
             msg = None
 
         if msg:
-            watchdog_logger.info(msg)
+            logger.info(msg)
 
         await asyncio.sleep(1)
 
@@ -217,11 +205,6 @@ async def main():
     token = args.token
     history_path = args.history
 
-    logging.basicConfig(
-        format='[%(created).0f] %(message)s',
-        level=logging.INFO
-    )
-
     messages_queue = asyncio.Queue()
     saving_msgs_queue = asyncio.Queue()
     sending_queue = asyncio.Queue()
@@ -229,7 +212,7 @@ async def main():
 
     while True:
         async with create_task_group() as tg:
-            tg.start_soon(upload_old_msgs, history_path, messages_queue)
+            tg.start_soon(load_old_msgs, history_path, messages_queue)
             tg.start_soon(save_msgs, history_path, saving_msgs_queue)
             tg.start_soon(
                 handle_connection, host, port,

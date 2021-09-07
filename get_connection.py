@@ -1,22 +1,22 @@
 from contextlib import asynccontextmanager
 import asyncio
 import socket
-import logging
+from loguru import logger
 
 
-logger = logging.getLogger(__file__)
-
-
-def chat_is_available(host, port):
-    """Check the chat connection for the given host and port."""
-    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+async def try_to_connect_chat(host, port):
+    """Try to connect to the chat.
+    If the connection was successful,
+    return the reader and writer objects of the connection.
+    """
     try:
-        s.connect((host, port))
-        # Shutdown both halves of the connection
-        s.shutdown(2)
-        return True
+        reader, writer = await asyncio.open_connection(
+            host,
+            port,
+        )
+        return reader, writer
     except socket.gaierror:
-        return False
+        return None
 
 
 @asynccontextmanager
@@ -30,17 +30,16 @@ async def get_connection(host, port, timeout=30):
     """
     default_timeout = 0
 
-    while not chat_is_available(host, port):
+    while True:
+        connection = await try_to_connect_chat(host, port)
+        if connection:
+            reader, writer = connection
+            break
         logger.warning(
             f'No chat connection. Reconnect after {default_timeout} seconds.'
-            )
-        await asyncio.sleep(default_timeout)
-        default_timeout = timeout
-
-    reader, writer = await asyncio.open_connection(
-            host,
-            port,
         )
+        await asyncio.sleep(default_timeout)
+        default_timeout += timeout
 
     try:
         yield reader, writer

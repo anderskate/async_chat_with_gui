@@ -3,9 +3,10 @@ from get_connection import get_connection
 import asyncio
 import json
 import argparse
+import aiofiles
 
 
-async def register_user(host, port, entry_field, draw_obj):
+async def register_user(host, port, entry_field):
     """Register a new user in the chat and save account hash in txt file.
 
     After user registration, closes the drawing object.
@@ -33,10 +34,8 @@ async def register_user(host, port, entry_field, draw_obj):
         writer.close()
         await writer.wait_closed()
 
-        with open('user_token.txt', 'w') as f:
-            f.write(account_hash)
-
-        draw_obj.destroy()
+        async with aiofiles.open('user_token.txt', 'w') as f:
+            await f.write(account_hash)
 
 
 def draw_register_block(host, port):
@@ -50,14 +49,14 @@ def draw_register_block(host, port):
     but = tkinter.Button(text="Зарегистрироваться")
 
     but.bind("<Return>", lambda event: asyncio.run(
-        register_user(host, port, ent, root))
+        register_user(host, port, ent))
     )
 
     lbl.pack()
     ent.pack()
 
     but["command"] = lambda: asyncio.run(
-        register_user(host, port, ent, root)
+        register_user(host, port, ent)
     )
     but.pack()
 
